@@ -1,0 +1,17 @@
+{
+  "providers": {
+    "deepseek": {
+      "name": "deepseek",
+      "endpoint": "https://api.deepseek.com",
+      "apiKey": "your-deepseek-api-key"
+    }
+  },
+  "apiRefrances": {
+    "chat": {
+      "openai": {
+        "path": "/chat/completions",
+        "method": "POST"
+      }
+    }
+  }
+}
