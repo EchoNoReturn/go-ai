@@ -77,3 +77,48 @@ func (r *OpenAIChatRequestBody) Validate() (bool, error) {
 	}
 	return true, nil
 }
+
+// ======== Response Body 定义 ========
+
+// OpenAI风格响应结构体
+type OpenAIChatResponseBody struct {
+	ID      string             `json:"id" yaml:"id"`                           // 响应唯一标识
+	Object  string             `json:"object" yaml:"object"`                   // 类型，如"chat.completion"
+	Created int64              `json:"created" yaml:"created"`                 // 时间戳
+	Model   string             `json:"model" yaml:"model"`                     // 模型名称
+	Choices []OpenAIChatChoice `json:"choices" yaml:"choices"`                 // 结果列表
+	Usage   *OpenAIChatUsage   `json:"usage,omitempty" yaml:"usage,omitempty"` // token统计
+}
+
+type OpenAIChatChoice struct {
+	Index        int             `json:"index" yaml:"index"`                           // 结果序号
+	Message      MessageItem     `json:"message" yaml:"message"`                       // 消息内容
+	FinishReason string          `json:"finish_reason" yaml:"finish_reason"`           // 结束原因
+	Logprobs     *OpenAILogprobs `json:"logprobs,omitempty" yaml:"logprobs,omitempty"` // 置信度
+}
+
+type OpenAILogprobs struct {
+	Content []map[string]float64 `json:"content" yaml:"content"` // 内容置信度
+}
+
+type OpenAIChatUsage struct {
+	PromptTokens     int `json:"prompt_tokens" yaml:"prompt_tokens"`         // 提示tokens
+	CompletionTokens int `json:"completion_tokens" yaml:"completion_tokens"` // 生成tokens
+	TotalTokens      int `json:"total_tokens" yaml:"total_tokens"`           // 总tokens
+}
+
+// 流式响应结构体
+type OpenAIChatStreamResponseBody struct {
+	ID      string                   `json:"id" yaml:"id"`
+	Object  string                   `json:"object" yaml:"object"`
+	Created int64                    `json:"created" yaml:"created"`
+	Model   string                   `json:"model" yaml:"model"`
+	Choices []OpenAIChatStreamChoice `json:"choices" yaml:"choices"`
+}
+
+type OpenAIChatStreamChoice struct {
+	Index        int             `json:"index" yaml:"index"`
+	Delta        MessageItem     `json:"delta" yaml:"delta"` // 增量内容
+	FinishReason string          `json:"finish_reason" yaml:"finish_reason"`
+	Logprobs     *OpenAILogprobs `json:"logprobs,omitempty" yaml:"logprobs,omitempty"`
+}

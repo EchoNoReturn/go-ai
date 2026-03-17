@@ -1,11 +1,13 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type LLMSession struct {
@@ -21,7 +23,6 @@ type LLMSession struct {
 	PresencePenalty  *float64
 	ResponseFormat   *OpenAIResponseFormat
 	Stop             interface{}
-	Stream           *bool
 	StreamOptions    interface{}
 	Temperature      *float64
 	TopP             *float64
@@ -29,6 +30,92 @@ type LLMSession struct {
 	Logprobs         *bool
 	TopLogprobs      *int
 	Header           map[string]string // 新增：自定义请求头
+}
+
+// ======== 策略拆分辅助函数 ========
+// 构建请求体
+func (c *LLMSession) buildRequestBody(stream bool) ([]byte, string, error) {
+	var reqBody []byte
+	var err error
+	var url string
+	switch c.Type {
+	case OpenAI:
+		openaiReq := OpenAIChatRequestBody{
+			Model:            c.Model,
+			Messages:         toMessageItemSlice(c.MessageList),
+			Thinking:         c.Thinking,
+			FrequencyPenalty: c.FrequencyPenalty,
+			MaxTokens:        c.MaxTokens,
+			PresencePenalty:  c.PresencePenalty,
+			ResponseFormat:   c.ResponseFormat,
+			Stop:             c.Stop,
+			Stream:           &stream,
+			StreamOptions:    c.StreamOptions,
+			Temperature:      c.Temperature,
+			TopP:             c.TopP,
+			Tools:            c.Tools,
+			ToolChoice:       c.ToolChoice,
+			Logprobs:         c.Logprobs,
+			TopLogprobs:      c.TopLogprobs,
+		}
+		reqBody, err = json.Marshal(openaiReq)
+		url = c.Endpoint + "/chat/completions"
+	case Anthropic:
+		anthropicReq := AnthropicChatRequest{
+			Model:         c.Model,
+			Messages:      c.MessageList,
+			System:        c.Thinking,
+			MaxTokens:     c.MaxTokens,
+			Temperature:   c.Temperature,
+			TopP:          c.TopP,
+			StopSequences: nil,
+			Stream:        &stream,
+			Thinking:      c.Thinking,
+			ToolChoice:    c.ToolChoice,
+			Tools:         c.Tools,
+		}
+		reqBody, err = json.Marshal(anthropicReq)
+		url = c.Endpoint + "/anthropic/v1/messages"
+	default:
+		return nil, "", errors.New("unsupported LLM type")
+	}
+	return reqBody, url, err
+}
+
+// 发送HTTP请求
+func (c *LLMSession) sendRequest(url string, reqBody []byte) (*http.Response, error) {
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.ApiKey)
+	for k, v := range c.Header {
+		req.Header.Set(k, v)
+	}
+	return client.Do(req)
+}
+
+// 解析响应体
+func (c *LLMSession) parseResponse(respBody []byte) (any, error) {
+	switch c.Type {
+	case OpenAI:
+		var result OpenAIChatResponseBody
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return nil, err
+		}
+		return &result, nil
+	case Anthropic:
+		var result AnthropicChatResponse
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return nil, err
+		}
+		return &result, nil
+	default:
+		return nil, errors.New("unsupported LLM type")
+	}
 }
 
 // ListModels 查询支持的模型列表（OpenAI/DeepSeek），Anthropic不支持
@@ -116,85 +203,91 @@ func (c *LLMSession) AppendToolMessage(content, toolCallId string) *LLMSession {
 	return c
 }
 
-func (c *LLMSession) RunChat() (string, error) {
+func (c *LLMSession) RunChat() (interface{}, error) {
 	// 检查 Model 是否设置
 	if c.Model == "" {
-		return "", errors.New("model is required, but not set")
+		return nil, errors.New("model is required, but not set")
 	}
-	// 根据类型构建请求体
-	var reqBody []byte
-	var err error
-	var url string
-	var respContent string
-	switch c.Type {
-	case OpenAI:
-		// OpenAI/DeepSeek风格
-		openaiReq := OpenAIChatRequestBody{
-			Model:            c.Model,
-			Messages:         toMessageItemSlice(c.MessageList),
-			Thinking:         c.Thinking,
-			FrequencyPenalty: c.FrequencyPenalty,
-			MaxTokens:        c.MaxTokens,
-			PresencePenalty:  c.PresencePenalty,
-			ResponseFormat:   c.ResponseFormat,
-			Stop:             c.Stop,
-			Stream:           c.Stream,
-			StreamOptions:    c.StreamOptions,
-			Temperature:      c.Temperature,
-			TopP:             c.TopP,
-			Tools:            c.Tools,
-			ToolChoice:       c.ToolChoice,
-			Logprobs:         c.Logprobs,
-			TopLogprobs:      c.TopLogprobs,
+	// 构建请求体
+	reqBody, url, err := c.buildRequestBody(false)
+	if err != nil {
+		return nil, err
+	}
+	// 发送请求
+	resp, err := c.sendRequest(url, reqBody)
+	if err != nil {
+		return nil, err
+	}
+	// 非流式响应直接解析并返回
+  defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	// 解析响应，返回结构体对象
+	respObj, err := c.parseResponse(respBytes)
+	if err != nil {
+		return nil, err
+	}
+	return respObj, nil
+}
+
+func (c *LLMSession) RunChatStream() (<-chan any, <-chan error) {
+	resultChan := make(chan any)
+	errorChan := make(chan error, 1)
+
+	go func() {
+		defer close(resultChan)
+		defer close(errorChan)
+
+		// 检查 Model 是否设置
+		if c.Model == "" {
+			errorChan <- errors.New("model is required, but not set")
+			return
 		}
-		reqBody, err = json.Marshal(openaiReq)
-		url = c.Endpoint + "/chat/completions"
-	case Anthropic:
-		// Anthropic风格
-		anthropicReq := AnthropicChatRequest{
-			Model:         c.Model,
-			Messages:      c.MessageList,
-			System:        c.Thinking, // 可根据实际需求调整
-			MaxTokens:     c.MaxTokens,
-			Temperature:   c.Temperature,
-			TopP:          c.TopP,
-			StopSequences: nil,
-			Stream:        c.Stream,
-			Thinking:      c.Thinking,
-			ToolChoice:    c.ToolChoice,
-			Tools:         c.Tools,
+		// 构建请求体
+		reqBody, url, err := c.buildRequestBody(true)
+		if err != nil {
+			errorChan <- err
+			return
 		}
-		reqBody, err = json.Marshal(anthropicReq)
-		url = c.Endpoint + "/anthropic/v1/messages"
-	default:
-		return "", errors.New("unsupported LLM type")
-	}
-	if err != nil {
-		return "", err
-	}
-	// 发起 HTTP 请求
-	client := &http.Client{}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.ApiKey)
-	// 合并自定义 Header
-	for k, v := range c.Header {
-		req.Header.Set(k, v)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	respContent = string(body)
-	return respContent, nil
+		// 发送请求
+		resp, err := c.sendRequest(url, reqBody)
+		if err != nil {
+			errorChan <- err
+			return
+		}
+		defer resp.Body.Close()
+		
+		// 流式响应解析
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				errorChan <- err
+				return
+			}
+
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "data:") { continue }
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if data == "" || data == "[DONE]" { continue }
+
+			// 解析 SSE 数据段
+			respObj, err := c.parseResponse([]byte(data))
+			if err != nil {
+				errorChan <- err
+				return
+			}
+			resultChan <- respObj
+		}
+	}()
+
+	return resultChan, errorChan
 }
 
 // 辅助函数：将 []LLMMessage 转换为 []MessageItem

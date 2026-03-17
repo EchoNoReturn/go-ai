@@ -169,6 +169,7 @@ func CreateMessage(role LLMMessageType, content string) LLMMessage {
 type LLMToolFunction struct {
 	Name        string `json:"name" yaml:"name"`
 	Description string `json:"description" yaml:"description"`
+	Parameters map[string]interface{} `json:"parameters,omitempty" yaml:"parameters,omitempty"`
 }
 
 type LLMTool struct {

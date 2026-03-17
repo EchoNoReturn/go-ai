@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"go-ai/configs"
 	"go-ai/llm"
 )
@@ -35,20 +36,51 @@ func main() {
 		panic(err)
 	}
 
-	model_list, err := session.ListModels()
-	if err != nil {
-		panic(err)
-	}
-	println("Available Models:", model_list)
-
 	session.Model = "deepseek-chat"
 
-	session.AppendSystemMessage("你是一个智能助手", "")
-	session.AppendUserMessage("请介绍一下自己", "")
-
-	result, err := session.RunChat()
-	if err != nil {
-		panic(err)
+	session.Tools = []llm.LLMTool{
+		{
+			Type: "function",
+			Function: llm.LLMToolFunction{
+				Name:        "get_current_weather",
+				Description: "获取指定城市当前的天气信息",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"city": map[string]interface{}{
+							"type":        "string",
+							"description": "要查询天气的城市名称",
+						},
+					},
+				},
+			},
+		},
 	}
-	println("LLM Response:", result)
+
+	session.AppendSystemMessage("你是一个智能助手", "")
+	session.AppendUserMessage("北京现在是什么天气？", "")
+
+	var num = 0
+	resultChan, errorChan := session.RunChatStream()
+	for resultChan != nil || errorChan != nil  {
+		select {
+		case result, ok := <-resultChan:
+			if !ok {
+				resultChan = nil
+				continue
+			}
+			responseBytes, err := json.Marshal(result)
+			if err != nil {
+				panic(err)
+			}
+			println("LLM Response:", num, string(responseBytes))
+			num++
+		case err, ok := <-errorChan:
+			if !ok {
+				errorChan = nil
+				continue
+			}
+			panic(err)
+		}
+	}
 }
