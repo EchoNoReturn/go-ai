@@ -167,12 +167,38 @@ func CreateMessage(role LLMMessageType, content string) LLMMessage {
 // ======= LLM工具定义 ========
 
 type LLMToolFunction struct {
-	Name        string `json:"name" yaml:"name"`
-	Description string `json:"description" yaml:"description"`
-	Parameters map[string]interface{} `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	Name        string                 `json:"name" yaml:"name"`
+	Description string                 `json:"description" yaml:"description"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty" yaml:"parameters,omitempty"`
 }
 
 type LLMTool struct {
 	Type     string          `json:"type" yaml:"type"`
 	Function LLMToolFunction `json:"function" yaml:"function"`
 }
+
+// ====== Request Style =========
+
+type RequestMethodInfo struct {
+	Path   string
+	Method string
+}
+
+func GetRequestInfo(style LLMType, typeStr string) RequestMethodInfo {
+	_config := map[LLMType]any{
+		OpenAI: map[string]RequestMethodInfo{
+			"chat": {
+				Path:   "/chat/completions",
+				Method: "POST",
+			},
+		},
+		Anthropic: map[string]RequestMethodInfo{
+			"chat": {
+				Path:   "/anthropic/v1/completions",
+				Method: "POST",
+			},
+		},
+	}
+	return _config[style].(map[string]RequestMethodInfo)[typeStr]
+}
+

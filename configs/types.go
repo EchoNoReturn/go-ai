@@ -18,6 +18,22 @@ type ApiReferences struct {
 }
 
 type RootConfig struct {
-	Providers     map[string]ProviderConfig `json:"providers"`
-	ApiReferences ApiReferences             `json:"apiRefrances"`
+	Providers       map[string]ProviderConfig `json:"providers"`
+	CurrentProvider string                    `json:"currentProvider"`
+	ApiReferences   ApiReferences             `json:"apiReferences"`
+}
+
+func (c *RootConfig) GetProvider(name string) (*ProviderConfig, bool) {
+	provider, exists := c.Providers[name]
+	if !exists {
+		return nil, false
+	}
+	return &provider, true
+}
+
+func (c *RootConfig) GetCurrentProvider() (*ProviderConfig, bool) {
+	if c == nil {
+		return nil, false
+	}
+	return c.GetProvider(c.CurrentProvider)
 }

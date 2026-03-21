@@ -6,7 +6,8 @@
       "apiKey": "your-deepseek-api-key"
     }
   },
-  "apiRefrances": {
+  "currentProvider": "openrouter",
+  "apiReferences": {
     "chat": {
       "openai": {
         "path": "/chat/completions",

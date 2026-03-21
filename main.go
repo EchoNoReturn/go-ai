@@ -6,37 +6,33 @@ import (
 	"go-ai/llm"
 )
 
+const _config_path = "config.json"
+
+var APPLICATION_CONFIG *configs.RootConfig
+
 func main() {
-	const configPath = "config.json"
-	config, err := configs.LoadConfigFromFile(configPath)
+	APPLICATION_CONFIG, err := configs.LoadConfigFromFile(_config_path)
 	if err != nil {
 		panic(err)
 	}
 
 	// 打印加载的配置
-	if config != nil {
-		for name, provider := range config.Providers {
-			println("Provider Name:", name)
-			println("Endpoint:", provider.Endpoint)
-			println("API Key:", provider.ApiKey)
-			println()
-		}
-	} else {
-		println("No configuration loaded.")
+	if APPLICATION_CONFIG == nil {
+		panic("No configuration loaded.")
 	}
 
 	// 创建一个LLMSession示例
-	deepseekConfig, exists := config.Providers["deepseek"]
+	providerConfig, exists := APPLICATION_CONFIG.GetCurrentProvider()
 	if !exists {
-		println("Provider 'deepseek' not found in configuration.")
-		return
+		panic("Current provider not found in configuration.")
 	}
-	session, err := llm.NewSession(deepseekConfig.ApiKey, deepseekConfig.Endpoint)
+	session, err := llm.NewSession(providerConfig.ApiKey, providerConfig.Endpoint)
 	if err != nil {
 		panic(err)
 	}
 
-	session.Model = "deepseek-chat"
+	session.Model = "xiaomi/mimo-v2-pro"
+	// session.Model = "deepseek-chat"
 
 	session.Tools = []llm.LLMTool{
 		{
@@ -61,8 +57,8 @@ func main() {
 	session.AppendUserMessage("北京现在是什么天气？", "")
 
 	var num = 0
-	resultChan, errorChan := session.RunChatStream()
-	for resultChan != nil || errorChan != nil  {
+	resultChan, errorChan := session.RunChatStream(false)
+	for resultChan != nil || errorChan != nil {
 		select {
 		case result, ok := <-resultChan:
 			if !ok {

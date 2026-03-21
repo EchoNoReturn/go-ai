@@ -34,7 +34,7 @@ type LLMSession struct {
 
 // ======== 策略拆分辅助函数 ========
 // 构建请求体
-func (c *LLMSession) buildRequestBody(stream bool) ([]byte, string, error) {
+func (c *LLMSession) buildRequestBody(stream bool, requestMethodInfo RequestMethodInfo) ([]byte, string, error) {
 	var reqBody []byte
 	var err error
 	var url string
@@ -59,7 +59,7 @@ func (c *LLMSession) buildRequestBody(stream bool) ([]byte, string, error) {
 			TopLogprobs:      c.TopLogprobs,
 		}
 		reqBody, err = json.Marshal(openaiReq)
-		url = c.Endpoint + "/chat/completions"
+		url = c.Endpoint + requestMethodInfo.Path
 	case Anthropic:
 		anthropicReq := AnthropicChatRequest{
 			Model:         c.Model,
@@ -75,7 +75,7 @@ func (c *LLMSession) buildRequestBody(stream bool) ([]byte, string, error) {
 			Tools:         c.Tools,
 		}
 		reqBody, err = json.Marshal(anthropicReq)
-		url = c.Endpoint + "/anthropic/v1/messages"
+		url = c.Endpoint + requestMethodInfo.Path
 	default:
 		return nil, "", errors.New("unsupported LLM type")
 	}
@@ -83,9 +83,9 @@ func (c *LLMSession) buildRequestBody(stream bool) ([]byte, string, error) {
 }
 
 // 发送HTTP请求
-func (c *LLMSession) sendRequest(url string, reqBody []byte) (*http.Response, error) {
+func (c *LLMSession) sendRequest(url string, reqBody []byte, reqMethodInfo RequestMethodInfo) (*http.Response, error) {
 	client := &http.Client{}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest(reqMethodInfo.Method, url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -203,23 +203,40 @@ func (c *LLMSession) AppendToolMessage(content, toolCallId string) *LLMSession {
 	return c
 }
 
+func checkResp(resp *http.Response) error {
+	// 检查响应状态码
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		var bodyJson map[string]interface{}
+		json.Unmarshal(body, &bodyJson)
+		reason := bodyJson["error"].(map[string]interface{})["message"].(string)
+		return errors.New("unexpected status code: " + resp.Status + ", reason: " + reason)
+	}
+	return nil
+}
+
 func (c *LLMSession) RunChat() (interface{}, error) {
 	// 检查 Model 是否设置
 	if c.Model == "" {
 		return nil, errors.New("model is required, but not set")
 	}
+	requestMethodInfo := GetRequestInfo(c.Type, "chat")
 	// 构建请求体
-	reqBody, url, err := c.buildRequestBody(false)
+	reqBody, url, err := c.buildRequestBody(false, requestMethodInfo)
 	if err != nil {
 		return nil, err
 	}
 	// 发送请求
-	resp, err := c.sendRequest(url, reqBody)
+	resp, err := c.sendRequest(url, reqBody, requestMethodInfo)
 	if err != nil {
 		return nil, err
 	}
 	// 非流式响应直接解析并返回
-  defer resp.Body.Close()
+	defer resp.Body.Close()
+
+	if err := checkResp(resp); err != nil {
+		return nil, err
+	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -233,7 +250,7 @@ func (c *LLMSession) RunChat() (interface{}, error) {
 	return respObj, nil
 }
 
-func (c *LLMSession) RunChatStream() (<-chan any, <-chan error) {
+func (c *LLMSession) RunChatStream(noHandle bool) (<-chan any, <-chan error) {
 	resultChan := make(chan any)
 	errorChan := make(chan error, 1)
 
@@ -247,19 +264,27 @@ func (c *LLMSession) RunChatStream() (<-chan any, <-chan error) {
 			return
 		}
 		// 构建请求体
-		reqBody, url, err := c.buildRequestBody(true)
+		requestMethodInfo := GetRequestInfo(c.Type, "chat")
+		reqBody, url, err := c.buildRequestBody(true, requestMethodInfo)
 		if err != nil {
 			errorChan <- err
 			return
 		}
+
 		// 发送请求
-		resp, err := c.sendRequest(url, reqBody)
+		resp, err := c.sendRequest(url, reqBody, requestMethodInfo)
 		if err != nil {
 			errorChan <- err
 			return
 		}
 		defer resp.Body.Close()
-		
+
+		// 检查响应状态码
+		if err := checkResp(resp); err != nil {
+			errorChan <- err
+			return
+		}
+
 		// 流式响应解析
 		reader := bufio.NewReader(resp.Body)
 		for {
@@ -273,9 +298,19 @@ func (c *LLMSession) RunChatStream() (<-chan any, <-chan error) {
 			}
 
 			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "data:") { continue }
+
+			if noHandle {
+				resultChan <- line
+				continue
+			}
+
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data == "" || data == "[DONE]" { continue }
+			if data == "" || data == "[DONE]" {
+				continue
+			}
 
 			// 解析 SSE 数据段
 			respObj, err := c.parseResponse([]byte(data))
