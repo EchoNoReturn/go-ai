@@ -1,5 +1,7 @@
 package configs
 
+import "fmt"
+
 type ProviderConfig struct {
 	Name     string `json:"name"`
 	Endpoint string `json:"endpoint"`
@@ -20,6 +22,7 @@ type ApiReferences struct {
 type RootConfig struct {
 	Providers       map[string]ProviderConfig `json:"providers"`
 	CurrentProvider string                    `json:"currentProvider"`
+	CurrentModel    string                    `json:"currentModel"`
 	ApiReferences   ApiReferences             `json:"apiReferences"`
 }
 
@@ -36,4 +39,11 @@ func (c *RootConfig) GetCurrentProvider() (*ProviderConfig, bool) {
 		return nil, false
 	}
 	return c.GetProvider(c.CurrentProvider)
+}
+
+func (c *RootConfig) GetCurrentModel() (string, error) {
+	if c == nil || c.CurrentModel == "" {
+		return "", fmt.Errorf("could not run without a model tag")
+	}
+	return c.CurrentModel, nil
 }

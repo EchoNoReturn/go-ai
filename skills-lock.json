@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "git-commit-cn": {
+      "source": "EchoNoReturn/yoyo-skills",
+      "sourceType": "github",
+      "computedHash": "8108ae9f60ba6417f2fe5fa6ec512acdcfe922b8796b2537adb71429fc7d6880"
+    }
+  }
+}

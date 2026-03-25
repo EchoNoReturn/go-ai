@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -100,22 +101,8 @@ func (c *LLMSession) sendRequest(url string, reqBody []byte, reqMethodInfo Reque
 
 // 解析响应体
 func (c *LLMSession) parseResponse(respBody []byte) (any, error) {
-	switch c.Type {
-	case OpenAI:
-		var result OpenAIChatResponseBody
-		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil, err
-		}
-		return &result, nil
-	case Anthropic:
-		var result AnthropicChatResponse
-		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil, err
-		}
-		return &result, nil
-	default:
-		return nil, errors.New("unsupported LLM type")
-	}
+	normalized := normalizeResponseBody(respBody)
+	return decodeResponse(c.Type, normalized)
 }
 
 // ListModels 查询支持的模型列表（OpenAI/DeepSeek），Anthropic不支持
@@ -207,9 +194,7 @@ func checkResp(resp *http.Response) error {
 	// 检查响应状态码
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		var bodyJson map[string]interface{}
-		json.Unmarshal(body, &bodyJson)
-		reason := bodyJson["error"].(map[string]interface{})["message"].(string)
+		reason := extractErrorReason(body)
 		return errors.New("unexpected status code: " + resp.Status + ", reason: " + reason)
 	}
 	return nil
@@ -250,7 +235,7 @@ func (c *LLMSession) RunChat() (interface{}, error) {
 	return respObj, nil
 }
 
-func (c *LLMSession) RunChatStream(noHandle bool) (<-chan any, <-chan error) {
+func (c *LLMSession) RunChatStream(handle bool) (<-chan any, <-chan error) {
 	resultChan := make(chan any)
 	errorChan := make(chan error, 1)
 
@@ -299,7 +284,7 @@ func (c *LLMSession) RunChatStream(noHandle bool) (<-chan any, <-chan error) {
 
 			line = strings.TrimSpace(line)
 
-			if noHandle {
+			if !handle {
 				resultChan <- line
 				continue
 			}
@@ -359,3 +344,115 @@ func NewSession(apiKey, endpoint string) (*LLMSession, error) {
 		Header:      make(map[string]string),
 	}, nil
 }
+
+type ParseError struct {
+	Provider string
+	Preview  string
+	Err      error
+}
+
+func (e *ParseError) Error() string {
+	return fmt.Sprintf("parse response failed (provider=%s): %v, preview=%s", e.Provider, e.Err, e.Preview)
+}
+
+func (e *ParseError) Unwrap() error {
+	return e.Err
+}
+
+func decodeResponse(provider LLMType, respBody []byte) (any, error) {
+	switch provider {
+	case OpenAI:
+		var result OpenAIChatResponseBody
+		if err := unmarshalWithEnvelope(respBody, &result); err != nil {
+			return nil, newParseError(provider, respBody, err)
+		}
+		return &result, nil
+	case Anthropic:
+		var result AnthropicChatResponse
+		if err := unmarshalWithEnvelope(respBody, &result); err != nil {
+			return nil, newParseError(provider, respBody, err)
+		}
+		return &result, nil
+	default:
+		return nil, errors.New("unsupported LLM type")
+	}
+}
+
+func normalizeResponseBody(respBody []byte) []byte {
+	trimmed := bytes.TrimSpace(respBody)
+	if after, ok :=bytes.CutPrefix(trimmed, utf8Bom); ok  {
+		trimmed = after
+	}
+	return trimmed
+}
+
+func unmarshalWithEnvelope(respBody []byte, target interface{}) error {
+	var envelope map[string]json.RawMessage
+	if errEnvelope := json.Unmarshal(respBody, &envelope); errEnvelope == nil {
+		for _, key := range []string{"data", "result", "response"} {
+			if raw, ok := envelope[key]; ok {
+				if errWrapped := json.Unmarshal(raw, target); errWrapped == nil {
+					return nil
+				} else {
+					return errWrapped
+				}
+			}
+		}
+	}
+	return json.Unmarshal(respBody, target)
+}
+
+func newParseError(provider LLMType, respBody []byte, err error) error {
+	return &ParseError{
+		Provider: providerName(provider),
+		Preview:  truncatePreview(respBody, 200),
+		Err:      err,
+	}
+}
+
+func providerName(provider LLMType) string {
+	switch provider {
+	case OpenAI:
+		return "openai"
+	case Anthropic:
+		return "anthropic"
+	default:
+		return "unknown"
+	}
+}
+
+func truncatePreview(respBody []byte, max int) string {
+	if len(respBody) == 0 {
+		return "\"\""
+	}
+	preview := string(respBody)
+	if len(preview) > max {
+		preview = preview[:max] + "..."
+	}
+	return fmt.Sprintf("%q", preview)
+}
+
+func extractErrorReason(respBody []byte) string {
+	normalized := normalizeResponseBody(respBody)
+	var bodyJson map[string]interface{}
+	if err := json.Unmarshal(normalized, &bodyJson); err == nil {
+		if errObj, ok := bodyJson["error"]; ok {
+			switch value := errObj.(type) {
+			case map[string]interface{}:
+				if msg, ok := value["message"].(string); ok && msg != "" {
+					return msg
+				}
+			case string:
+				if value != "" {
+					return value
+				}
+			}
+		}
+		if msg, ok := bodyJson["message"].(string); ok && msg != "" {
+			return msg
+		}
+	}
+	return "unknown error"
+}
+
+var utf8Bom = []byte{0xEF, 0xBB, 0xBF}

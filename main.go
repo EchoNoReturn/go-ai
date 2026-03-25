@@ -1,9 +1,10 @@
 package main
 
 import (
-	"encoding/json"
+	// "encoding/json"
+	"go-ai/agent"
 	"go-ai/configs"
-	"go-ai/llm"
+	// "go-ai/llm"
 )
 
 const _config_path = "config.json"
@@ -21,62 +22,67 @@ func main() {
 		panic("No configuration loaded.")
 	}
 
-	// 创建一个LLMSession示例
-	providerConfig, exists := APPLICATION_CONFIG.GetCurrentProvider()
-	if !exists {
-		panic("Current provider not found in configuration.")
-	}
-	session, err := llm.NewSession(providerConfig.ApiKey, providerConfig.Endpoint)
-	if err != nil {
-		panic(err)
-	}
-
-	session.Model = "xiaomi/mimo-v2-pro"
-	// session.Model = "deepseek-chat"
-
-	session.Tools = []llm.LLMTool{
-		{
-			Type: "function",
-			Function: llm.LLMToolFunction{
-				Name:        "get_current_weather",
-				Description: "获取指定城市当前的天气信息",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"city": map[string]interface{}{
-							"type":        "string",
-							"description": "要查询天气的城市名称",
-						},
-					},
-				},
-			},
+	agent.RunTask("你好，你是谁啊？", agent.RunTaskOptions{
+		EnvConfig: *APPLICATION_CONFIG,
+		StreamCallback: func(result string) {
+			println("回答:", result)
 		},
-	}
+	})
+	// 创建一个LLMSession示例
+	// providerConfig, exists := APPLICATION_CONFIG.GetCurrentProvider()
+	// if !exists {
+	// 	panic("Current provider not found in configuration.")
+	// }
+	// session, err := llm.NewSession(providerConfig.ApiKey, providerConfig.Endpoint)
+	// if err != nil {
+	// 	panic(err)
+	// }
 
-	session.AppendSystemMessage("你是一个智能助手", "")
-	session.AppendUserMessage("北京现在是什么天气？", "")
+	// session.Model = APPLICATION_CONFIG.CurrentModel
 
-	var num = 0
-	resultChan, errorChan := session.RunChatStream(false)
-	for resultChan != nil || errorChan != nil {
-		select {
-		case result, ok := <-resultChan:
-			if !ok {
-				resultChan = nil
-				continue
-			}
-			responseBytes, err := json.Marshal(result)
-			if err != nil {
-				panic(err)
-			}
-			println("LLM Response:", num, string(responseBytes))
-			num++
-		case err, ok := <-errorChan:
-			if !ok {
-				errorChan = nil
-				continue
-			}
-			panic(err)
-		}
-	}
+	// session.Tools = []llm.LLMTool{
+	// 	{
+	// 		Type: "function",
+	// 		Function: llm.LLMToolFunction{
+	// 			Name:        "get_current_weather",
+	// 			Description: "获取指定城市当前的天气信息",
+	// 			Parameters: map[string]interface{}{
+	// 				"type": "object",
+	// 				"properties": map[string]interface{}{
+	// 					"city": map[string]interface{}{
+	// 						"type":        "string",
+	// 						"description": "要查询天气的城市名称",
+	// 					},
+	// 				},
+	// 			},
+	// 		},
+	// 	},
+	// }
+
+	// session.AppendSystemMessage("你是一个智能助手", "")
+	// session.AppendUserMessage("北京现在是什么天气？", "")
+
+	// var num = 0
+	// resultChan, errorChan := session.RunChatStream(true)
+	// for resultChan != nil || errorChan != nil {
+	// 	select {
+	// 	case result, ok := <-resultChan:
+	// 		if !ok {
+	// 			resultChan = nil
+	// 			continue
+	// 		}
+	// 		responseBytes, err := json.Marshal(result)
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		println("LLM Response:", num, string(responseBytes))
+	// 		num++
+	// 	case err, ok := <-errorChan:
+	// 		if !ok {
+	// 			errorChan = nil
+	// 			continue
+	// 		}
+	// 		panic(err)
+	// 	}
+	// }
 }

@@ -1,6 +1,10 @@
 package llm
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+)
 
 type AnthropicChatRequest struct {
 	Model         string       `json:"model"`    // 必选
@@ -48,9 +52,58 @@ type AnthropicChatResponse struct {
 	ID         string              `json:"id" yaml:"id"`                           // 响应唯一标识
 	Type       string              `json:"type" yaml:"type"`                       // 类型，如"completion"
 	Model      string              `json:"model" yaml:"model"`                     // 模型名称
-	Content    string              `json:"content" yaml:"content"`                 // 生成内容
+	Content    AnthropicContent    `json:"content" yaml:"content"`                 // 生成内容
 	StopReason string              `json:"stop_reason" yaml:"stop_reason"`         // 结束原因
 	Usage      *AnthropicChatUsage `json:"usage,omitempty" yaml:"usage,omitempty"` // token统计
+}
+
+type AnthropicContentBlock struct {
+	Type string `json:"type" yaml:"type"`
+	Text string `json:"text" yaml:"text"`
+}
+
+type AnthropicContent struct {
+	Text   string
+	Blocks []AnthropicContentBlock
+}
+
+func (c *AnthropicContent) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	switch data[0] {
+	case '"':
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		c.Text = text
+		c.Blocks = nil
+		return nil
+	case '[':
+		var blocks []AnthropicContentBlock
+		if err := json.Unmarshal(data, &blocks); err != nil {
+			return err
+		}
+		c.Blocks = blocks
+		c.Text = joinAnthropicText(blocks)
+		return nil
+	default:
+		return errors.New("unsupported content format")
+	}
+}
+
+func joinAnthropicText(blocks []AnthropicContentBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Type == "text" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "")
 }
 
 type AnthropicChatUsage struct {
@@ -63,7 +116,7 @@ type AnthropicChatStreamResponse struct {
 	ID         string              `json:"id" yaml:"id"`
 	Type       string              `json:"type" yaml:"type"`
 	Model      string              `json:"model" yaml:"model"`
-	Content    string              `json:"content" yaml:"content"` // 增量内容
+	Content    AnthropicContent    `json:"content" yaml:"content"` // 增量内容
 	StopReason string              `json:"stop_reason" yaml:"stop_reason"`
 	Usage      *AnthropicChatUsage `json:"usage,omitempty" yaml:"usage,omitempty"`
 }
